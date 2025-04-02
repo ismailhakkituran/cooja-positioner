@@ -2,14 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Node Position Picker</title>
+  <title>Cooja Positioner GUI</title>
   <style>
     html, body {
       margin: 0;
       height: 100%;
-      font-family: Arial, sans-serif;
       overflow: hidden;
+      font-family: Arial, sans-serif;
     }
     #container {
       display: flex;
@@ -27,16 +26,12 @@
       display: flex;
       flex-direction: column;
     }
-    #controls {
-      margin-bottom: 10px;
-    }
     #controls label {
-      margin-right: 5px;
       font-weight: bold;
     }
     #controls input {
       width: 80px;
-      margin-right: 15px;
+      margin: 5px 0 10px;
     }
     #buttons {
       margin-bottom: 10px;
@@ -49,9 +44,17 @@
       border: 1px solid #ccc;
       padding: 5px;
     }
-    canvas {
-      display: block;
-      cursor: crosshair;
+    #positionTooltip {
+      position: absolute;
+      display: none;
+      background: rgba(0, 0, 0, 0.75);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 1000;
+      font-family: monospace;
     }
   </style>
 </head>
@@ -60,19 +63,20 @@
     <canvas id="grid"></canvas>
     <div id="sidebar">
       <div id="controls">
-        <label for="nodeIdInput">Node ID:</label>
-        <input type="number" id="nodeIdInput" value="1" />
-        <br /><br />
-        <label for="intervalInput">Interval (ms):</label>
+        <label for="nodeIdInput">Node ID:</label><br/>
+        <input type="number" id="nodeIdInput" value="1" /><br/>
+        <label for="intervalInput">Interval (ms):</label><br/>
         <input type="number" id="intervalInput" value="1000" />
       </div>
       <div id="buttons">
         <button onclick="resetData()">Reset</button>
-        <button onclick="downloadData()">Export as .dat</button>
+        <button onclick="downloadData()">Save positions.dat</button>
       </div>
       <pre id="output"></pre>
     </div>
   </div>
+
+  <div id="positionTooltip"></div>
 
   <script>
     const canvas = document.getElementById('grid');
@@ -80,6 +84,7 @@
     const output = document.getElementById('output');
     const nodeInput = document.getElementById('nodeIdInput');
     const intervalInput = document.getElementById('intervalInput');
+    const tooltip = document.getElementById('positionTooltip');
 
     let scale = 1;
     let offsetX, offsetY;
@@ -87,6 +92,9 @@
     let currentTimeSec = 0.0;
     let draggingNodeIndex = -1;
     let wasDragging = false;
+    let isPanning = false;
+    let wasPanning = false;
+    let panStart = { x: 0, y: 0 };
 
     function centerOrigin() {
       offsetX = canvas.width / 2;
@@ -118,73 +126,90 @@
       drawGrid();
     });
 
-    canvas.addEventListener('mousemove', (e) => {
+    canvas.addEventListener('mousedown', (e) => {
+      wasDragging = false;
+      wasPanning = false;
       const x = (e.offsetX - offsetX) / scale;
       const y = (e.offsetY - offsetY) / scale;
-      let overNode = false;
 
       for (let i = 0; i < positions.length; i++) {
         const p = positions[i];
         const dx = p.x - x;
         const dy = p.y - y;
-        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) {
-          overNode = true;
-          break;
+        
+        //if (dx * dx + dy * dy < (5 / scale) ** 2)
+        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) 
+        {
+          draggingNodeIndex = i;
+          canvas.style.cursor = 'grabbing';
+          return;
         }
       }
 
-      canvas.style.cursor =
-        draggingNodeIndex >= 0
-          ? 'grabbing'
-          : overNode
-          ? 'grab'
-          : 'crosshair';
+      isPanning = true;
+      panStart.x = e.clientX;
+      panStart.y = e.clientY;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      const x = (e.offsetX - offsetX) / scale;
+      const y = (e.offsetY - offsetY) / scale;
 
       if (draggingNodeIndex >= 0) {
         wasDragging = true;
         const node = positions[draggingNodeIndex];
         node.x = x;
         node.y = y;
-
         const parts = node.line.split(' ');
         parts[2] = x.toFixed(9);
         parts[3] = y.toFixed(9);
         node.line = parts.join(' ');
 
+        tooltip.style.left = (e.clientX + 15) + 'px';
+        tooltip.style.top = (e.clientY - 10) + 'px';
+        tooltip.style.display = 'block';
+        tooltip.textContent = `X: ${x.toFixed(2)}\nY: ${y.toFixed(2)}`;
+
         updateOutput();
         drawGrid();
       }
-    });
 
-    canvas.addEventListener('mousedown', (e) => {
-      wasDragging = false;
-      const x = (e.offsetX - offsetX) / scale;
-      const y = (e.offsetY - offsetY) / scale;
-      for (let i = 0; i < positions.length; i++) {
-        const p = positions[i];
-        const dx = p.x - x;
-        const dy = p.y - y;
-        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) {
-          draggingNodeIndex = i;
-          canvas.style.cursor = 'grabbing';
-          return;
-        }
+      if (isPanning && draggingNodeIndex === -1) {
+        wasPanning = true;
+        const dx = e.clientX - panStart.x;
+        const dy = e.clientY - panStart.y;
+        offsetX += dx;
+        offsetY += dy;
+        panStart.x = e.clientX;
+        panStart.y = e.clientY;
+        drawGrid();
       }
-      draggingNodeIndex = -1;
+
+      //const dx = positions.some(p => Math.abs(p.x - x) < 5 / scale) ? 'grab' : 'crosshair';
+      //canvas.style.cursor = draggingNodeIndex >= 0 ? 'grabbing' : dx;
+      
+      const nearNode = positions.some(p => {
+        const dx = (p.x * scale + offsetX) - e.offsetX;
+        const dy = (p.y * scale + offsetY) - e.offsetY;
+        return dx * dx + dy * dy < 25; // 5px yarıçap
+      });
+      canvas.style.cursor = draggingNodeIndex >= 0 ? 'grabbing' : (nearNode ? 'grab' : 'crosshair');
+
     });
 
     canvas.addEventListener('mouseup', () => {
-      if (draggingNodeIndex >= 0) {
-        updateOutput(); // only update, don’t add new
-      }
+      if (draggingNodeIndex >= 0) updateOutput();
       draggingNodeIndex = -1;
+      isPanning = false;
+      tooltip.style.display = 'none';
       canvas.style.cursor = 'crosshair';
     });
 
     canvas.addEventListener('click', (e) => {
-      if (wasDragging) {
+      if (wasDragging || wasPanning) {
         wasDragging = false;
-        return; // prevent false click after drag
+        wasPanning = false;
+        return;
       }
 
       const x = (e.offsetX - offsetX) / scale;
@@ -227,7 +252,6 @@
 
     function drawGrid() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       const gridSize = 20;
       const thickLineEvery = 5;
 
@@ -256,10 +280,10 @@
 
       ctx.fillStyle = 'black';
       ctx.font = 'bold 14px Arial';
-      ctx.fillText('(-,-)', 10, canvas.height - 10);
-      ctx.fillText('(+,-)', canvas.width - 50, canvas.height - 10);
       ctx.fillText('(-,+)', 10, 20);
       ctx.fillText('(+,+)', canvas.width - 50, 20);
+      ctx.fillText('(-,-)', 10, canvas.height - 10);
+      ctx.fillText('(+,-)', canvas.width - 50, canvas.height - 10);
 
       ctx.fillStyle = 'red';
       for (let p of positions) {
