@@ -15,13 +15,16 @@
 - Save and reset options
 
 ## 📂 Output Format (`positions.dat`)
-
-<node_id> <timestamp> <x> <y> 0.000000000 0.000000000
+  ```shell
+`<node_id> <timestamp> <x> <y> <z> <rotation-angle>
+  ```
 
 
 Example:
-
+  ```shell
 1 0.000000000 0.000000000 0.000000000 0.000000000 0.000000000 1 1.000000000 10.000000000 0.000000000 0.000000000 0.000000000
+   ```
+
 
 
 ## 🧰 Usage
@@ -39,7 +42,7 @@ Example:
 
 ## 📷 Demo Video
 
-[📺 Watch on YouTube](https://your-link-here)
+[📺 Will be coming on YouTube](https://your-link-here)
 
 ---
 
@@ -52,5 +55,5 @@ MIT License
 
 If you use this project in academic work or tools, please cite it as:
 
-**Your Name (2024)**, “Cooja Positioner GUI”, GitHub repository:  
-https://github.com/yourname/cooja-positioner
+**Conference paper .bib will be coming soon (2025)**, “Cooja Positioner GUI”, GitHub repository:  
+https://github.com/ismailhakkituran/cooja-positioner
