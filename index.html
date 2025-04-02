@@ -1,1 +1,276 @@
-merhaba
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Node Position Picker</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+    #container {
+      display: flex;
+      height: 100%;
+    }
+    #grid {
+      flex: 1;
+      background: #f0f0f0;
+    }
+    #sidebar {
+      width: 300px;
+      padding: 10px;
+      border-left: 1px solid #ccc;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+    }
+    #controls {
+      margin-bottom: 10px;
+    }
+    #controls label {
+      margin-right: 5px;
+      font-weight: bold;
+    }
+    #controls input {
+      width: 80px;
+      margin-right: 15px;
+    }
+    #buttons {
+      margin-bottom: 10px;
+    }
+    #output {
+      flex: 1;
+      overflow-y: auto;
+      font-family: monospace;
+      white-space: pre;
+      border: 1px solid #ccc;
+      padding: 5px;
+    }
+    canvas {
+      display: block;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="grid"></canvas>
+    <div id="sidebar">
+      <div id="controls">
+        <label for="nodeIdInput">Node ID:</label>
+        <input type="number" id="nodeIdInput" value="1" />
+        <br /><br />
+        <label for="intervalInput">Interval (ms):</label>
+        <input type="number" id="intervalInput" value="1000" />
+      </div>
+      <div id="buttons">
+        <button onclick="resetData()">Reset</button>
+        <button onclick="downloadData()">Export as .dat</button>
+      </div>
+      <pre id="output"></pre>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('grid');
+    const ctx = canvas.getContext('2d');
+    const output = document.getElementById('output');
+    const nodeInput = document.getElementById('nodeIdInput');
+    const intervalInput = document.getElementById('intervalInput');
+
+    let scale = 1;
+    let offsetX, offsetY;
+    let positions = [];
+    let currentTimeSec = 0.0;
+    let draggingNodeIndex = -1;
+    let wasDragging = false;
+
+    function centerOrigin() {
+      offsetX = canvas.width / 2;
+      offsetY = canvas.height / 2;
+    }
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth - 300;
+      canvas.height = window.innerHeight;
+      centerOrigin();
+      drawGrid();
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomIntensity = 0.1;
+      const mouseX = e.offsetX;
+      const mouseY = e.offsetY;
+      const wheel = e.deltaY < 0 ? 1 : -1;
+
+      const zoom = Math.exp(wheel * zoomIntensity);
+      scale *= zoom;
+
+      offsetX = mouseX - (mouseX - offsetX) * zoom;
+      offsetY = mouseY - (mouseY - offsetY) * zoom;
+
+      drawGrid();
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      const x = (e.offsetX - offsetX) / scale;
+      const y = (e.offsetY - offsetY) / scale;
+      let overNode = false;
+
+      for (let i = 0; i < positions.length; i++) {
+        const p = positions[i];
+        const dx = p.x - x;
+        const dy = p.y - y;
+        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) {
+          overNode = true;
+          break;
+        }
+      }
+
+      canvas.style.cursor =
+        draggingNodeIndex >= 0
+          ? 'grabbing'
+          : overNode
+          ? 'grab'
+          : 'crosshair';
+
+      if (draggingNodeIndex >= 0) {
+        wasDragging = true;
+        const node = positions[draggingNodeIndex];
+        node.x = x;
+        node.y = y;
+
+        const parts = node.line.split(' ');
+        parts[2] = x.toFixed(9);
+        parts[3] = y.toFixed(9);
+        node.line = parts.join(' ');
+
+        updateOutput();
+        drawGrid();
+      }
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      wasDragging = false;
+      const x = (e.offsetX - offsetX) / scale;
+      const y = (e.offsetY - offsetY) / scale;
+      for (let i = 0; i < positions.length; i++) {
+        const p = positions[i];
+        const dx = p.x - x;
+        const dy = p.y - y;
+        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) {
+          draggingNodeIndex = i;
+          canvas.style.cursor = 'grabbing';
+          return;
+        }
+      }
+      draggingNodeIndex = -1;
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      if (draggingNodeIndex >= 0) {
+        updateOutput(); // only update, don’t add new
+      }
+      draggingNodeIndex = -1;
+      canvas.style.cursor = 'crosshair';
+    });
+
+    canvas.addEventListener('click', (e) => {
+      if (wasDragging) {
+        wasDragging = false;
+        return; // prevent false click after drag
+      }
+
+      const x = (e.offsetX - offsetX) / scale;
+      const y = (e.offsetY - offsetY) / scale;
+
+      const nodeId = parseInt(nodeInput.value) || 1;
+      const intervalMs = parseFloat(intervalInput.value) || 1000;
+
+      const timestamp = currentTimeSec;
+      currentTimeSec += intervalMs / 1000.0;
+
+      const xStr = x.toFixed(9);
+      const yStr = y.toFixed(9);
+      const timeStr = timestamp.toFixed(9);
+
+      const line = `${nodeId} ${timeStr} ${xStr} ${yStr} 0.000000000 0.000000000`;
+      positions.push({ x, y, line });
+      updateOutput();
+      drawGrid();
+    });
+
+    function updateOutput() {
+      output.textContent = positions.map(p => p.line).join('\n');
+    }
+
+    function resetData() {
+      positions = [];
+      currentTimeSec = 0.0;
+      output.textContent = '';
+      drawGrid();
+    }
+
+    function downloadData() {
+      const blob = new Blob([output.textContent], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'positions.dat';
+      a.click();
+    }
+
+    function drawGrid() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const gridSize = 20;
+      const thickLineEvery = 5;
+
+      const left = -offsetX / scale;
+      const top = -offsetY / scale;
+      const right = left + canvas.width / scale;
+      const bottom = top + canvas.height / scale;
+
+      for (let x = Math.floor(left / gridSize) * gridSize; x < right; x += gridSize) {
+        ctx.beginPath();
+        ctx.lineWidth = (x === 0) ? 2.5 : (x % (gridSize * thickLineEvery) === 0 ? 1.5 : 0.5);
+        ctx.strokeStyle = (x === 0) ? '#000' : '#999';
+        ctx.moveTo(x * scale + offsetX, 0);
+        ctx.lineTo(x * scale + offsetX, canvas.height);
+        ctx.stroke();
+      }
+
+      for (let y = Math.floor(top / gridSize) * gridSize; y < bottom; y += gridSize) {
+        ctx.beginPath();
+        ctx.lineWidth = (y === 0) ? 2.5 : (y % (gridSize * thickLineEvery) === 0 ? 1.5 : 0.5);
+        ctx.strokeStyle = (y === 0) ? '#000' : '#999';
+        ctx.moveTo(0, y * scale + offsetY);
+        ctx.lineTo(canvas.width, y * scale + offsetY);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = 'black';
+      ctx.font = 'bold 14px Arial';
+      ctx.fillText('(-,-)', 10, canvas.height - 10);
+      ctx.fillText('(+,-)', canvas.width - 50, canvas.height - 10);
+      ctx.fillText('(-,+)', 10, 20);
+      ctx.fillText('(+,+)', canvas.width - 50, 20);
+
+      ctx.fillStyle = 'red';
+      for (let p of positions) {
+        ctx.beginPath();
+        ctx.arc(p.x * scale + offsetX, p.y * scale + offsetY, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    resizeCanvas();
+  </script>
+</body>
+</html>
+
