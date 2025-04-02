@@ -1,7 +1,4 @@
-# cooja-positioner
-Mobile node position generator for Cooja. 
-
-# Cooja Positioner GUI
+# Cooja Positioner (GUI in the browser)
 
 🎯 A lightweight browser-based GUI tool for creating and managing mobile node positions for Contiki/Cooja simulations.
 
