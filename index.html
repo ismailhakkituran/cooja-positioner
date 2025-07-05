@@ -2,39 +2,37 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Cooja Positioner GUI</title>
+  <title>Node Position Editor</title>
   <style>
     html, body {
       margin: 0;
       height: 100%;
       overflow: hidden;
-      font-family: Arial, sans-serif;
+      font-family: Arial;
     }
     #container {
       display: flex;
       height: 100%;
     }
-    #grid {
+    canvas {
       flex: 1;
       background: #f0f0f0;
+      cursor: crosshair;
     }
     #sidebar {
       width: 300px;
       padding: 10px;
-      border-left: 1px solid #ccc;
       background: #fff;
+      border-left: 1px solid #ccc;
       display: flex;
       flex-direction: column;
     }
     #controls label {
-      font-weight: bold;
+      display: inline-block;
+      width: 80px;
     }
     #controls input {
-      width: 80px;
-      margin: 5px 0 10px;
-    }
-    #buttons {
-      margin-bottom: 10px;
+      width: 180px;
     }
     #output {
       flex: 1;
@@ -43,18 +41,7 @@
       white-space: pre;
       border: 1px solid #ccc;
       padding: 5px;
-    }
-    #positionTooltip {
-      position: absolute;
-      display: none;
-      background: rgba(0, 0, 0, 0.75);
-      color: white;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      pointer-events: none;
-      z-index: 1000;
-      font-family: monospace;
+      margin-top: 10px;
     }
   </style>
 </head>
@@ -63,38 +50,30 @@
     <canvas id="grid"></canvas>
     <div id="sidebar">
       <div id="controls">
-        <label for="nodeIdInput">Node ID:</label><br/>
-        <input type="number" id="nodeIdInput" value="1" /><br/>
-        <label for="intervalInput">Interval (ms):</label><br/>
-        <input type="number" id="intervalInput" value="1000" />
+        <label for="nodeIdInput">Node ID:</label>
+        <input type="number" id="nodeIdInput" value="1"><br><br>
+        <label for="intervalInput">Interval:</label>
+        <input type="number" id="intervalInput" value="1000"><br><br>
       </div>
-      <div id="buttons">
+      <div>
         <button onclick="resetData()">Reset</button>
-        <button onclick="downloadData()">Save positions.dat</button>
+        <button onclick="downloadData()">Save positions.dat</button><br><br>
+        <input type="file" id="uploadInput" accept=".dat" />
       </div>
       <pre id="output"></pre>
     </div>
   </div>
 
-  <div id="positionTooltip"></div>
-
   <script>
-    const canvas = document.getElementById('grid');
-    const ctx = canvas.getContext('2d');
-    const output = document.getElementById('output');
-    const nodeInput = document.getElementById('nodeIdInput');
-    const intervalInput = document.getElementById('intervalInput');
-    const tooltip = document.getElementById('positionTooltip');
+    const canvas = document.getElementById("grid");
+    const ctx = canvas.getContext("2d");
+    const output = document.getElementById("output");
+    const nodeInput = document.getElementById("nodeIdInput");
+    const intervalInput = document.getElementById("intervalInput");
+    const uploadInput = document.getElementById("uploadInput");
 
-    let scale = 1;
-    let offsetX, offsetY;
-    let positions = [];
-    let currentTimeSec = 0.0;
-    let draggingNodeIndex = -1;
-    let wasDragging = false;
-    let isPanning = false;
-    let wasPanning = false;
-    let panStart = { x: 0, y: 0 };
+    let scale = 1, offsetX, offsetY;
+    let positions = [], currentTimeSec = 0.0, draggingNodeIndex = -1;
 
     function centerOrigin() {
       offsetX = canvas.width / 2;
@@ -108,123 +87,73 @@
       drawGrid();
     }
 
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
 
-    canvas.addEventListener('wheel', (e) => {
+    canvas.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const zoomIntensity = 0.1;
+      const zoom = Math.exp((e.deltaY < 0 ? 1 : -1) * 0.1);
       const mouseX = e.offsetX;
       const mouseY = e.offsetY;
-      const wheel = e.deltaY < 0 ? 1 : -1;
 
-      const zoom = Math.exp(wheel * zoomIntensity);
       scale *= zoom;
-
       offsetX = mouseX - (mouseX - offsetX) * zoom;
       offsetY = mouseY - (mouseY - offsetY) * zoom;
-
       drawGrid();
     });
 
-    canvas.addEventListener('mousedown', (e) => {
-      wasDragging = false;
-      wasPanning = false;
+    canvas.addEventListener("mousedown", (e) => {
       const x = (e.offsetX - offsetX) / scale;
       const y = (e.offsetY - offsetY) / scale;
-
       for (let i = 0; i < positions.length; i++) {
         const p = positions[i];
-        const dx = p.x - x;
-        const dy = p.y - y;
-        
-        //if (dx * dx + dy * dy < (5 / scale) ** 2)
-        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) 
-        {
+        const dx = p.x - x, dy = p.y - y;
+        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) {
           draggingNodeIndex = i;
           canvas.style.cursor = 'grabbing';
           return;
         }
       }
-
-      isPanning = true;
-      panStart.x = e.clientX;
-      panStart.y = e.clientY;
+      draggingNodeIndex = -1;
     });
 
-    canvas.addEventListener('mousemove', (e) => {
-      const x = (e.offsetX - offsetX) / scale;
-      const y = (e.offsetY - offsetY) / scale;
-
-      if (draggingNodeIndex >= 0) {
-        wasDragging = true;
-        const node = positions[draggingNodeIndex];
-        node.x = x;
-        node.y = y;
-        const parts = node.line.split(' ');
-        parts[2] = x.toFixed(9);
-        parts[3] = y.toFixed(9);
-        node.line = parts.join(' ');
-
-        tooltip.style.left = (e.clientX + 15) + 'px';
-        tooltip.style.top = (e.clientY - 10) + 'px';
-        tooltip.style.display = 'block';
-        tooltip.textContent = `X: ${x.toFixed(2)}\nY: ${y.toFixed(2)}`;
-
-        updateOutput();
-        drawGrid();
-      }
-
-      if (isPanning && draggingNodeIndex === -1) {
-        wasPanning = true;
-        const dx = e.clientX - panStart.x;
-        const dy = e.clientY - panStart.y;
-        offsetX += dx;
-        offsetY += dy;
-        panStart.x = e.clientX;
-        panStart.y = e.clientY;
-        drawGrid();
-      }
-
-      //const dx = positions.some(p => Math.abs(p.x - x) < 5 / scale) ? 'grab' : 'crosshair';
-      //canvas.style.cursor = draggingNodeIndex >= 0 ? 'grabbing' : dx;
-      
-      const nearNode = positions.some(p => {
-        const dx = (p.x * scale + offsetX) - e.offsetX;
-        const dy = (p.y * scale + offsetY) - e.offsetY;
-        return dx * dx + dy * dy < 25; // 5px yarıçap
-      });
-      canvas.style.cursor = draggingNodeIndex >= 0 ? 'grabbing' : (nearNode ? 'grab' : 'crosshair');
-
-    });
-
-    canvas.addEventListener('mouseup', () => {
+    canvas.addEventListener("mouseup", () => {
       if (draggingNodeIndex >= 0) updateOutput();
       draggingNodeIndex = -1;
-      isPanning = false;
-      tooltip.style.display = 'none';
       canvas.style.cursor = 'crosshair';
     });
 
-    canvas.addEventListener('click', (e) => {
-      if (wasDragging || wasPanning) {
-        wasDragging = false;
-        wasPanning = false;
-        return;
-      }
-
+    canvas.addEventListener("mousemove", (e) => {
       const x = (e.offsetX - offsetX) / scale;
       const y = (e.offsetY - offsetY) / scale;
+      let overNode = false;
+      let index = 1;
+      for (const p of positions) {
+        const dx = p.x - x, dy = p.y - y;
+        if (Math.sqrt(dx * dx + dy * dy) < 5 / scale) {
+          overNode = true;
+          break;
+        }
+      }
+      canvas.style.cursor = draggingNodeIndex >= 0 ? 'grabbing' : (overNode ? 'grab' : 'crosshair');
+      if (draggingNodeIndex >= 0) {
+        positions[draggingNodeIndex].x = x;
+        positions[draggingNodeIndex].y = y;
+        drawGrid();
+      }
+    });
 
+    canvas.addEventListener("click", (e) => {
+      if (draggingNodeIndex >= 0) return;
+      const x = (e.offsetX - offsetX) / scale;
+      const y = (e.offsetY - offsetY) / scale;
       const nodeId = parseInt(nodeInput.value) || 1;
       const intervalMs = parseFloat(intervalInput.value) || 1000;
-
       const timestamp = currentTimeSec;
       currentTimeSec += intervalMs / 1000.0;
-
       const xStr = x.toFixed(9);
       const yStr = y.toFixed(9);
       const timeStr = timestamp.toFixed(9);
-
       const line = `${nodeId} ${timeStr} ${xStr} ${yStr} 0.000000000 0.000000000`;
       positions.push({ x, y, line });
       updateOutput();
@@ -232,29 +161,34 @@
     });
 
     function updateOutput() {
-      output.textContent = positions.map(p => p.line).join('\n');
+      output.textContent = positions.map((p, i) => {
+        const xStr = p.x.toFixed(9);
+        const yStr = p.y.toFixed(9);
+        const timeStr = (i * parseFloat(intervalInput.value) / 1000.0).toFixed(9);
+        const nodeId = parseInt(nodeInput.value) || 1;
+        return `${nodeId} ${timeStr} ${xStr} ${yStr} 0.000000000 0.000000000`;
+      }).join("\n");
     }
 
     function resetData() {
       positions = [];
       currentTimeSec = 0.0;
-      output.textContent = '';
+      output.textContent = "";
       drawGrid();
     }
 
     function downloadData() {
-      const blob = new Blob([output.textContent], { type: 'text/plain' });
-      const a = document.createElement('a');
+      const blob = new Blob([output.textContent], { type: "text/plain" });
+      const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = 'positions.dat';
+      a.download = "positions.dat";
       a.click();
     }
 
     function drawGrid() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const gridSize = 20;
+      const gridSize = 10;
       const thickLineEvery = 5;
-
       const left = -offsetX / scale;
       const top = -offsetY / scale;
       const right = left + canvas.width / scale;
@@ -263,7 +197,7 @@
       for (let x = Math.floor(left / gridSize) * gridSize; x < right; x += gridSize) {
         ctx.beginPath();
         ctx.lineWidth = (x === 0) ? 2.5 : (x % (gridSize * thickLineEvery) === 0 ? 1.5 : 0.5);
-        ctx.strokeStyle = (x === 0) ? '#000' : '#999';
+        ctx.strokeStyle = (x === 0) ? "#000" : "#ccc";
         ctx.moveTo(x * scale + offsetX, 0);
         ctx.lineTo(x * scale + offsetX, canvas.height);
         ctx.stroke();
@@ -272,29 +206,74 @@
       for (let y = Math.floor(top / gridSize) * gridSize; y < bottom; y += gridSize) {
         ctx.beginPath();
         ctx.lineWidth = (y === 0) ? 2.5 : (y % (gridSize * thickLineEvery) === 0 ? 1.5 : 0.5);
-        ctx.strokeStyle = (y === 0) ? '#000' : '#999';
+        ctx.strokeStyle = (y === 0) ? "#000" : "#ccc";
         ctx.moveTo(0, y * scale + offsetY);
         ctx.lineTo(canvas.width, y * scale + offsetY);
         ctx.stroke();
       }
 
-      ctx.fillStyle = 'black';
-      ctx.font = 'bold 14px Arial';
-      ctx.fillText('(-,+)', 10, 20);
-      ctx.fillText('(+,+)', canvas.width - 50, 20);
-      ctx.fillText('(-,-)', 10, canvas.height - 10);
-      ctx.fillText('(+,-)', canvas.width - 50, canvas.height - 10);
+      // Draw axes labels
+      
+      // Draw connecting lines
+      if (positions.length > 1) {
+        ctx.beginPath();
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 1.5;
+        ctx.moveTo(positions[0].x * scale + offsetX, positions[0].y * scale + offsetY);
+        for (let i = 1; i < positions.length; i++) {
+          ctx.lineTo(positions[i].x * scale + offsetX, positions[i].y * scale + offsetY);
+        }
+        ctx.stroke();
+      }
 
-      ctx.fillStyle = 'red';
-      for (let p of positions) {
+      ctx.fillStyle = "black";
+      ctx.font = "bold 14px Arial";
+      ctx.fillText("(-,+)", 10, 20);
+      ctx.fillText("(-,-)", 10, canvas.height - 10);
+      ctx.fillText("(+,+)", canvas.width - 50, 20);
+      ctx.fillText("(+,-)", canvas.width - 50, canvas.height - 10);
+
+      // Draw nodes
+      ctx.fillStyle = "grey";
+      let index = 1;
+      for (const p of positions) {
         ctx.beginPath();
         ctx.arc(p.x * scale + offsetX, p.y * scale + offsetY, 5, 0, Math.PI * 2);
         ctx.fill();
+      ctx.fillStyle = 'black';
+      ctx.font = '13px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText((index++).toString(), p.x * scale + offsetX, p.y * scale + offsetY);
+      ctx.fillStyle = 'grey';
       }
     }
 
-    resizeCanvas();
+    uploadInput.addEventListener("change", function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const lines = event.target.result.split("\n");
+        positions = [];
+        currentTimeSec = 0.0;
+
+        for (const line of lines) {
+          if (line.trim() === "") continue;
+          const parts = line.split(/\s+/);
+          if (parts.length < 4) continue;
+
+          const x = parseFloat(parts[2]);
+          const y = parseFloat(parts[3]);
+          positions.push({ x, y, line });
+        }
+
+        updateOutput();
+        drawGrid();
+      };
+      reader.readAsText(file);
+    });
   </script>
 </body>
 </html>
-
