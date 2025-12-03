@@ -409,7 +409,68 @@
     exportSelect.addEventListener('change', updateOutput);
 
     convertBtn.addEventListener('click', () => {
-      output.textContent = latlngInput.value;
+      // Parse lat/lng input
+      const text = latlngInput.value.trim();
+      if (!text) {
+        output.textContent = '';
+        return;
+      }
+      
+      const lines = text.split(/\r?\n/);
+      const parsedPoints = [];
+      
+      // Parse all lines
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 4) continue;
+        
+        const nodeId = parseInt(parts[0]) || 1;
+        const time = parseFloat(parts[1]) || 0;
+        const lat = parseFloat(parts[2]);
+        const lng = parseFloat(parts[3]);
+        
+        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+        
+        parsedPoints.push({ nodeId, time, lat, lng });
+      }
+      
+      if (parsedPoints.length === 0) {
+        output.textContent = '';
+        return;
+      }
+      
+      // Convert all points to XY meters (relative to map center)
+      const center = map.getCenter();
+      const centerPt = map.project(center, map.getZoom());
+      const metersPerPixel = calcMetersPerPixel(center.lat, map.getZoom());
+      
+      const xyPoints = parsedPoints.map(p => {
+        const pt = map.project([p.lat, p.lng], map.getZoom());
+        const dx = (pt.x - centerPt.x) * metersPerPixel;
+        const dy = -(pt.y - centerPt.y) * metersPerPixel;
+        return { nodeId: p.nodeId, time: p.time, x: dx, y: dy };
+      });
+      
+      // Get first point's XY coordinates (this will be the new center)
+      const firstPoint = xyPoints[0];
+      const offsetX = firstPoint.x;
+      const offsetY = firstPoint.y;
+      
+      // Shift all points so first point becomes (0, 0)
+      const shiftedPoints = xyPoints.map(p => ({
+        nodeId: p.nodeId,
+        time: p.time,
+        x: p.x - offsetX,
+        y: p.y - offsetY
+      }));
+      
+      // Format output as Cooja positions.dat (Y values negated for Cooja's coordinate system)
+      const outputLines = shiftedPoints.map(p => {
+        return `${p.nodeId} ${p.time.toFixed(9)} ${p.x.toFixed(9)} ${(-p.y).toFixed(9)} 0.000000000 0.000000000`;
+      });
+      
+      output.textContent = outputLines.join('\n');
     });
 
     latlngInput.addEventListener('input', (e) => {
