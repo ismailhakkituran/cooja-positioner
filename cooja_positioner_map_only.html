@@ -133,6 +133,7 @@
     let isSelectingRect = false; let selStartS=null, selEndS=null;
     let draggingNodeIndex = -1; let selectedInitial = null; let preDragSnapshot = null; let dragStartPx = null;
     let wasDragging = false;
+    let isCtrlSelection = false; // Flag to track if selection was started with Ctrl
 
     // Undo/Redo
     const undoStack = []; const redoStack = [];
@@ -188,86 +189,151 @@
 
     // === Map-mode interactions ===
     map.on('mousemove', (e)=>{ 
-      // Only allow node dragging in point mode
-      if (mode === 'point' && draggingNodeIndex>=0 && selected.size>0){ 
-        wasDragging = true;
-        const currentLatLng = e.latlng;
-        const startLatLng = [preDragSnapshot.positions[draggingNodeIndex].lat, preDragSnapshot.positions[draggingNodeIndex].lng];
-        const latOffset = currentLatLng.lat - startLatLng[0];
-        const lngOffset = currentLatLng.lng - startLatLng[1];
-        for (const si of selectedInitial) {
-          positions[si.idx].lat = si.lat + latOffset;
-          positions[si.idx].lng = si.lng + lngOffset;
+      if (mode === 'point') {
+        // Node dragging
+        if (draggingNodeIndex >= 0 && selected.size > 0) { 
+          wasDragging = true;
+          const currentLatLng = e.latlng;
+          const startLatLng = [preDragSnapshot.positions[draggingNodeIndex].lat, preDragSnapshot.positions[draggingNodeIndex].lng];
+          const latOffset = currentLatLng.lat - startLatLng[0];
+          const lngOffset = currentLatLng.lng - startLatLng[1];
+          for (const si of selectedInitial) {
+            positions[si.idx].lat = si.lat + latOffset;
+            positions[si.idx].lng = si.lng + lngOffset;
+          }
+          draw();
         }
-        draw();
+        // Rectangle selection update
+        else if (isSelectingRect && selStartS) {
+          const pt = map.latLngToContainerPoint(e.latlng);
+          selEndS = { x: pt.x, y: pt.y };
+          draw();
+        }
       }
     });
 
     map.on('mousedown', (e)=>{ 
       // Only allow node editing in point mode
       if (mode === 'point') {
-        const pt = map.latLngToContainerPoint(e.latlng); const i = hitTestNodeMap(pt.x, pt.y);
-        if (i>=0){ 
-          selected.clear(); 
-          selected.add(i); 
-          draggingNodeIndex=i; 
-          preDragSnapshot=snapshot(); 
-          selectedInitial=Array.from(selected).map(idx=>({ idx, lat:positions[idx].lat, lng:positions[idx].lng })); 
+        const pt = map.latLngToContainerPoint(e.latlng); 
+        const i = hitTestNodeMap(pt.x, pt.y);
+        
+        // Ctrl + Click: Point selection (single or multi with Shift)
+        if (e.originalEvent.ctrlKey || e.originalEvent.metaKey) {
+          isCtrlSelection = true;
+          if (i >= 0) {
+            // Toggle selection with Shift, replace selection without Shift
+            if (e.originalEvent.shiftKey) {
+              if (selected.has(i)) {
+                selected.delete(i);
+              } else {
+                selected.add(i);
+              }
+            } else {
+              if (!selected.has(i)) {
+                selected.clear();
+                selected.add(i);
+              }
+            }
+            draw();
+          } else {
+            // Ctrl + Click on empty area: Start rectangle selection
+            isSelectingRect = true;
+            selStartS = { x: pt.x, y: pt.y };
+            selEndS = { x: pt.x, y: pt.y };
+            if (!e.originalEvent.shiftKey) {
+              selected.clear();
+            }
+          }
+        }
+        // Normal Click on selected node: Start dragging
+        else if (i >= 0 && selected.has(i)) {
+          isCtrlSelection = false;
+          draggingNodeIndex = i;
+          preDragSnapshot = snapshot();
+          selectedInitial = Array.from(selected).map(idx => ({ 
+            idx, 
+            lat: positions[idx].lat, 
+            lng: positions[idx].lng 
+          }));
           dragStartPx = map.latLngToContainerPoint([positions[i].lat, positions[i].lng]);
           wasDragging = false;
           map.dragging.disable();
         }
+        // Normal Click on empty area: Prepare for point addition
         else {
-          isSelectingRect=true; selStartS={ x: pt.x, y: pt.y }; selEndS={ x: pt.x, y: pt.y };
+          isCtrlSelection = false;
+          isSelectingRect = true;
+          selStartS = { x: pt.x, y: pt.y };
+          selEndS = { x: pt.x, y: pt.y };
           window.mouseDownLatLng = e.latlng;
         }
       }
     });
 
     map.on('mouseup', (e)=>{ 
-      if (draggingNodeIndex>=0){ 
-        const before=JSON.stringify(preDragSnapshot.positions); 
-        const after=JSON.stringify(positions); 
-        if (before !== after) commitHistory(); 
-      }
-      else if (isSelectingRect && window.mouseDownLatLng && mode === 'point') {
-        // Only allow point addition in point mode
-        const dx=Math.abs(selEndS.x-selStartS.x), dy=Math.abs(selEndS.y-selStartS.y); 
-        const dragged=(dx+dy)>4; 
-        if (!dragged) {
-          commitHistory(); 
-          const lat = window.mouseDownLatLng.lat;
-          const lng = window.mouseDownLatLng.lng;
-          positions.push({ lat, lng }); 
-          selected.clear(); 
-          selected.add(positions.length-1); 
+      if (mode === 'point') {
+        if (draggingNodeIndex >= 0) {
+          // Finish dragging
+          const before = JSON.stringify(preDragSnapshot.positions); 
+          const after = JSON.stringify(positions); 
+          if (before !== after) commitHistory(); 
+        }
+        else if (isSelectingRect) {
+          const dx = Math.abs(selEndS.x - selStartS.x);
+          const dy = Math.abs(selEndS.y - selStartS.y); 
+          const dragged = (dx + dy) > 4;
           
-          const nodeId = parseInt(nodeInput.value) || 1;
-          const intervalMs = parseFloat(intervalInput.value) || 1000;
-          const time = ((positions.length - 1) * intervalMs / 1000).toFixed(9);
-          
-          const latStr = lat.toFixed(9);
-          const lngStr = lng.toFixed(9);
-          const newLine = `${nodeId} ${time} ${latStr} ${lngStr}`;
-          
-          if (latlngInput.value.trim()) {
-            latlngInput.value += '\n' + newLine;
-          } else {
-            latlngInput.value = newLine;
+          // Ctrl + Rectangle selection: Select points in rectangle
+          if (isCtrlSelection) {
+            if (dragged) {
+              const minX = Math.min(selStartS.x, selEndS.x);
+              const maxX = Math.max(selStartS.x, selEndS.x); 
+              const minY = Math.min(selStartS.y, selEndS.y);
+              const maxY = Math.max(selStartS.y, selEndS.y); 
+              
+              // Add to selection if Shift, replace if not
+              if (!e.originalEvent.shiftKey) {
+                selected.clear();
+              }
+              
+              positions.forEach((p, idx) => { 
+                const s = map.latLngToContainerPoint([p.lat, p.lng]); 
+                if (s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY) {
+                  selected.add(idx);
+                }
+              });
+              draw();
+            }
           }
-          
-          // Scroll to bottom
-          latlngInput.scrollTop = latlngInput.scrollHeight;
-          
-          draw(); 
-        } else {
-          const minX=Math.min(selStartS.x, selEndS.x), maxX=Math.max(selStartS.x, selEndS.x); 
-          const minY=Math.min(selStartS.y, selEndS.y), maxY=Math.max(selStartS.y, selEndS.y); 
-          selected.clear(); 
-          positions.forEach((p,idx)=>{ 
-            const s = map.latLngToContainerPoint([p.lat,p.lng]); 
-            if (s.x>=minX && s.x<=maxX && s.y>=minY && s.y<=maxY) selected.add(idx); 
-          }); 
+          // Normal Click: Add new point
+          else if (window.mouseDownLatLng && !dragged) {
+            commitHistory(); 
+            const lat = window.mouseDownLatLng.lat;
+            const lng = window.mouseDownLatLng.lng;
+            positions.push({ lat, lng }); 
+            selected.clear(); 
+            selected.add(positions.length - 1); 
+            
+            const nodeId = parseInt(nodeInput.value) || 1;
+            const intervalMs = parseFloat(intervalInput.value) || 1000;
+            const time = ((positions.length - 1) * intervalMs / 1000).toFixed(9);
+            
+            const latStr = lat.toFixed(9);
+            const lngStr = lng.toFixed(9);
+            const newLine = `${nodeId} ${time} ${latStr} ${lngStr}`;
+            
+            if (latlngInput.value.trim()) {
+              latlngInput.value += '\n' + newLine;
+            } else {
+              latlngInput.value = newLine;
+            }
+            
+            // Scroll to bottom
+            latlngInput.scrollTop = latlngInput.scrollHeight;
+            
+            draw(); 
+          }
         }
       }
       
@@ -275,9 +341,15 @@
       if (mode === 'maps') {
         map.dragging.enable();
       }
-      draggingNodeIndex=-1; selectedInitial=null; preDragSnapshot=null; 
-      isSelectingRect=false; selStartS=selEndS=null; 
+      
+      // Reset state
+      draggingNodeIndex = -1;
+      selectedInitial = null;
+      preDragSnapshot = null; 
+      isSelectingRect = false;
+      selStartS = selEndS = null; 
       window.mouseDownLatLng = null;
+      isCtrlSelection = false;
       setTimeout(() => { wasDragging = false; }, 50);
       draw(); 
     });
